@@ -1,0 +1,2 @@
+# ftpsync
+FTP folder synchronizer
