@@ -1,9 +1,10 @@
 import os
+import socket
 import unittest
 import thread
+from ftplib import FTP
 from time import sleep
 import Queue
-import random
 import tempfile
 import shutil
 
@@ -18,11 +19,12 @@ from db_storage import DatabaseStorage
 
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler
-from pyftpdlib.servers import FTPServer
+from pyftpdlib.servers import ThreadedFTPServer
 from ftpsync import FTPSync
 
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout,  # filename='myserver.log', # log to this file
+                    format='%(asctime)s %(message)s')  # include timestamp
 USERNAME = 'test_user'
 PASSWORD = 'test_password'
 WELCOME_MSG = 'WELCOME'
@@ -38,10 +40,11 @@ def ftp_server(username, password, port, dir):
     handler = FTPHandler
     handler.authorizer = authorizer
     handler.banner = WELCOME_MSG
-    address = ('', port)
+    logging.info('Opening FTPD on port %s' % port)
+    address = ('0.0.0.0', port)
 
-    server = FTPServer(address, handler)
-    server.max_cons_per_ip = 5
+    server = ThreadedFTPServer(address, handler)
+    server.max_cons_per_ip = 100
     return server
 
 
@@ -56,9 +59,9 @@ session = requests.Session()
 
 
 class TestFTPSync(unittest.TestCase):
-    def setUp(self):
-        self.succeeded_posts_queue = Queue.Queue()
+    succeeded_posts_queue = Queue.Queue()
 
+    def http_endpoint_200(self):
         def request_received_callback(request, context):
             context.status_code = 200
             logging.debug('Received post %s' % request)
@@ -68,42 +71,87 @@ class TestFTPSync(unittest.TestCase):
         adapter = requests_mock.Adapter()
         adapter.register_uri('POST', POST_URL, text=request_received_callback)
         session.mount('mock', adapter)
+        return session
 
-        self.portFTP = random.randrange(21000, 25000)
+    def http_endpoint_401(self):
+        def request_received_callback(request, context):
+            context.status_code = 401
+            logging.debug('Returning 401 for received post %s' % request)
+            return 'Unexpected error'
+
+        adapter = requests_mock.Adapter()
+        adapter.register_uri('POST', POST_URL, text=request_received_callback)
+        session.mount('mock', adapter)
+        return session
+
+    def setUp(self):
+        self.portFTP = self.pickUnusedPort()
 
         self.work_dir = tempfile.mkdtemp()
         logging.info('Port %s. Working dir %s' % (self.portFTP, self.work_dir))
 
-        self.ftp_server = ftp_server(USERNAME, PASSWORD, self.portFTP, self.work_dir)
-        thread.start_new_thread(self.ftp_server.serve_forever, ())
-        sleep(0.3)
+        try:
+            self.ftp_server = ftp_server(USERNAME, PASSWORD, self.portFTP, self.work_dir)
+        except Exception, e:
+            logging.error('Cannot start FTPD %s' % e)
+            raise e
 
+        def _start_ftp():
+            self.ftp_server.serve_forever()
+
+        thread.start_new_thread(_start_ftp, ())
         self.storage = DatabaseStorage(dbname='temp.db')
         self.storage.initialize()
+        ftp_online = False
+        while not ftp_online:
+            sleep(0.2)
+            try:
+                ftp_online = FTP().connect('localhost', self.portFTP)
+                if ftp_online:
+                    logging.info('FTPD online')
+            except Exception, e:
+                logging.debug('Cannot connect to %s error is %s' % (self.portFTP, e))
 
-        self.lcood = FTPSync(post_url=POST_URL, post_user=POST_USER, post_password=POST_PASSWORD,
-                             storage=self.storage, requests_session=session)
+    def _start_ftp_sync(self, requests_session):
+        self.ftpsync = FTPSync(post_url=POST_URL, post_user=POST_USER, post_password=POST_PASSWORD,
+                               storage=self.storage, requests_session=requests_session)
 
-        resp = self.lcood.connect('localhost', self.portFTP)
+        resp = self.ftpsync.connect('localhost', self.portFTP)
         self.assertTrue(WELCOME_MSG in resp)
 
-        resp = self.lcood.login(USERNAME, PASSWORD)
+        resp = self.ftpsync.login(USERNAME, PASSWORD)
         self.assertTrue('successful' in resp)
 
-        thread.start_new_thread(self.lcood.monitor_loop, ())
-        thread.start_new_thread(self.lcood.posting_loop, ())
+        thread.start_new_thread(self.ftpsync.monitor_loop, ())
+        thread.start_new_thread(self.ftpsync.posting_loop, ())
 
-        sleep(0.3)
+    def pickUnusedPort(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(('localhost', 0))
+        addr, port = s.getsockname()
+        s.close()
+        return port
 
     def tearDown(self):
         self.storage.clean()
         shutil.rmtree(self.work_dir)
-        self.lcood.stop()
+        if self.ftpsync:
+            self.ftpsync.stop()
         self.ftp_server.close()
         os.remove('temp.db')
-        sleep(2)
+
+    def test_endpoint_down(self):
+        requests_session = self.http_endpoint_401()
+        self._start_ftp_sync(requests_session)
+        sleep(1)
+        c1 = "<test />"
+        create_file(self.work_dir, c1)
+        sleep(1)
+        self.assertTrue(self.ftpsync.stopped)
 
     def test_no_new_files(self):
+        requests_session = self.http_endpoint_200()
+        self._start_ftp_sync(requests_session)
         try:
             content, auth_header = self.succeeded_posts_queue.get(True, 2)
             self.fail('Should receive nothing instead of %s' % content)
@@ -111,6 +159,9 @@ class TestFTPSync(unittest.TestCase):
             pass
 
     def test_one_new_file_posted(self):
+        requests_session = self.http_endpoint_200()
+        self._start_ftp_sync(requests_session)
+
         c1 = "<test />"
         create_file(self.work_dir, c1)
         try:
@@ -119,6 +170,13 @@ class TestFTPSync(unittest.TestCase):
             self.assertEquals(EXPECTED_BASIC_AUTH_HEADER, auth_header)
         except Queue.Empty:
             self.fail('Should receive one new file')
+
+    def test_ftpserver_down(self):
+        requests_session = self.http_endpoint_200()
+        self._start_ftp_sync(requests_session)
+        self.ftp_server.close()
+        sleep(1)
+        self.assertTrue(self.ftpsync.stopped)
 
 
 if __name__ == '__main__':

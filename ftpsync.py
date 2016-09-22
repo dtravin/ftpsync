@@ -60,7 +60,10 @@ class FTPSync:
                 logging.error('Error while monitoring FTP %s' % e)
                 self.stop()
 
-        self.ftp.quit()
+        try:
+            self.ftp.close()
+        except Exception, e:
+            logging.error('Error closing ftp client %s' % e)
 
     def posting_loop(self):
         while not self.stopped:
@@ -76,8 +79,10 @@ class FTPSync:
                     logging.info('POST succeeded for %s' % fname)
                 else:
                     logging.error('POST failed with %s' % resp)
+                    self.stop()
             except Exception as e:
                 logging.error('Upload failed for %s with %s' % (fname, e))
+                self.stop()
 
     def stop(self):
         self.stopped = True
