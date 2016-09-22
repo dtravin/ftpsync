@@ -15,7 +15,7 @@ class DatabaseStorage:
                 cur.execute('CREATE TABLE successful_posts (filename VARCHAR(200) PRIMARY KEY)')
                 con.commit()
         except Exception, e:
-            logging.error(e)
+            pass
 
     def clean(self):
         try:

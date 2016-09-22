@@ -7,4 +7,4 @@ RUN mkdir -p /var/log/supervisor /opt
 RUN cd /opt && git clone https://github.com/dtravin/ftpsync.git && cd ftpsync && pip install -r requirements.txt
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-CMD /usr/bin/supervisord -n #c /etc/supervisor/supervisord.conf && sleep 60
+CMD /usr/bin/supervisord -n #c /etc/supervisor/supervisord.conf

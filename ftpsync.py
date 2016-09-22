@@ -44,20 +44,21 @@ class FTPSync:
         logging.info('Monitoring started')
 
         while not self.stopped:
-            all_files = self.ftp.nlst()
-            logging.debug('Directory list %s' % all_files)
+            try:
+                all_files = self.ftp.nlst()
+                logging.debug('Directory list %s' % all_files)
 
-            to_post = self.storage.find_not_posted(all_files)
-            to_post_sorted = sorted(to_post, key=self._lcoo_file_sequence_extractor)
-            for remote_fname in to_post_sorted:
-                try:
+                to_post = self.storage.find_not_posted(all_files)
+                to_post_sorted = sorted(to_post, key=self._lcoo_file_sequence_extractor)
+                for remote_fname in to_post_sorted:
                     self.ftp.retrbinary('RETR ' + remote_fname, (lambda content: self.enqueue_to_post(remote_fname, content)))
-                except:
-                    logging.error('Error retrieving %s' % remote_fname)
 
-            sleep(self.scan_interval_seconds)
-            while not self.content_queue.empty():
                 sleep(self.scan_interval_seconds)
+                while not self.content_queue.empty():
+                    sleep(self.scan_interval_seconds)
+            except Exception, e:
+                logging.error('Error while monitoring FTP %s' % e)
+                self.stop()
 
         self.ftp.quit()
 
