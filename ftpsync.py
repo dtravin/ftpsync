@@ -1,10 +1,29 @@
 import Queue
 import logging
+import re
 from time import sleep
 
 import requests
 from requests.auth import HTTPBasicAuth
 from ftplib import FTP
+import dateutil.parser
+
+
+def extract_tstamp(fname):
+    m = re.search('OPTIBET(.+?)\.XML', fname)
+    if m:
+        try:
+            return dateutil.parser.parse(m.group(1)).replace(tzinfo=dateutil.tz.gettz('CET'))
+        except:
+            return None
+    else:
+        return None
+
+
+def sort_by_tstamp(to_post):
+    to_post_with_tstamp = [(x, extract_tstamp(x)) for x in to_post]
+    filtered = [e for e in to_post_with_tstamp if e[1]]
+    return [e[0] for e in sorted(filtered, key=lambda x: x[1])]
 
 
 class FTPSync:
@@ -33,9 +52,6 @@ class FTPSync:
         self.ftp.cwd(directory)
         return resp
 
-    def _lcoo_file_sequence_extractor(self, args):
-        return 1
-
     def enqueue_to_post(self, remote_fname, content):
         logging.info('Queueing remote file %s to post' % remote_fname)
         self.content_queue.put((remote_fname, content))
@@ -49,7 +65,8 @@ class FTPSync:
                 logging.debug('Directory list %s' % all_files)
 
                 to_post = self.storage.find_not_posted(all_files)
-                to_post_sorted = sorted(to_post, key=self._lcoo_file_sequence_extractor)
+
+                to_post_sorted = sort_by_tstamp(to_post)
                 for remote_fname in to_post_sorted:
                     self.ftp.retrbinary('RETR ' + remote_fname, (lambda content: self.enqueue_to_post(remote_fname, content)))
 

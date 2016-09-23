@@ -20,7 +20,7 @@ from db_storage import DatabaseStorage
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import ThreadedFTPServer
-from ftpsync import FTPSync
+from ftpsync import FTPSync, sort_by_tstamp
 
 logging.basicConfig(level=logging.INFO,
                     stream=sys.stdout,  # filename='myserver.log', # log to this file
@@ -49,7 +49,11 @@ def ftp_server(username, password, port, dir):
 
 
 def create_file(folder, content):
-    with tempfile.NamedTemporaryFile(prefix='lcoo_', suffix='.xml', dir=folder, delete=False) as f:
+    import faker
+    fake = faker.Faker()
+    rand_date = fake.date_time()
+    fname = 'OPTIBET%s.XML' % rand_date.isoformat()
+    with open('%s/%s' % (folder, fname),'w') as f:
         f.write(content)
         f.flush()
         return f.name
@@ -178,6 +182,23 @@ class TestFTPSync(unittest.TestCase):
         sleep(1)
         self.assertTrue(self.ftpsync.stopped)
 
+
+class TestUtil(unittest.TestCase):
+    def test_tstamp_extract(self):
+        f1 = "OPTIBET2016-9-25T11-59-33.XML"
+        f2 = "OPTIBET2016-9-23T11-59-33.XML"
+        f3 = "OPTIBET2016-9-24T11-59-33.XML"
+
+        expected = [f2, f3, f1]
+        self.assertEqual(expected, sort_by_tstamp([f1, f2, f3]))
+
+    def test_skip_invalid(self):
+        f1 = "OPTIBET.XML"
+        f2 = "OPTIBET2016-9-23T11-59-33.XML"
+        f3 = "OPTIBET2016-9-24T11-59-33.XML"
+
+        expected = [f2, f3]
+        self.assertEqual(expected, sort_by_tstamp([f1, f2, f3]))
 
 if __name__ == '__main__':
     unittest.main()
