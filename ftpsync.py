@@ -26,6 +26,10 @@ def sort_by_tstamp(to_post):
     return [e[0] for e in sorted(filtered, key=lambda x: x[1])]
 
 
+def adjust_commas(text_to_adjust):
+    return re.sub(r"(\d),(\d)", r"\1.\2", text_to_adjust, flags=re.MULTILINE)
+
+
 class FTPSync:
     ftp = FTP()
     content_queue = Queue.Queue()
@@ -90,7 +94,7 @@ class FTPSync:
                 continue
 
             try:
-                resp = self.requests_session.post(self.post_url, data=content, auth=HTTPBasicAuth(self.post_user, self.post_password))
+                resp = self.requests_session.post(self.post_url, data=adjust_commas(content), auth=HTTPBasicAuth(self.post_user, self.post_password))
                 if resp.status_code == 200:
                     self.storage.mark_as_posted(fname)
                     logging.info('POST succeeded for %s' % fname)

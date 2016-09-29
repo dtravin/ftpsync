@@ -20,7 +20,7 @@ from db_storage import DatabaseStorage
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import ThreadedFTPServer
-from ftpsync import FTPSync, sort_by_tstamp
+from ftpsync import FTPSync, sort_by_tstamp, adjust_commas
 
 logging.basicConfig(level=logging.INFO,
                     stream=sys.stdout,  # filename='myserver.log', # log to this file
@@ -199,6 +199,22 @@ class TestUtil(unittest.TestCase):
 
         expected = [f2, f3]
         self.assertEqual(expected, sort_by_tstamp([f1, f2, f3]))
+
+    def test_comma_replace_to_dot(self):
+        test='''
+        123,00
+        456,d
+        df,dd
+        '''
+
+        expected='''
+        123.00
+        456,d
+        df,dd
+        '''
+
+        commas = adjust_commas(test)
+        self.assertEquals(expected, commas)
 
 if __name__ == '__main__':
     unittest.main()
